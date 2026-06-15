@@ -521,8 +521,8 @@ setTimeout(() => {
     const intro = document.createElement('div');
     intro.id = 'intro-screen';
     intro.innerHTML = `
-        <div class="to-label">For you,</div>
-        <div class="to-label">From Ken.</div>
+        <div class="to-label">From Ken,</div>
+        <div class="to-label">For.</div>
         <div class="name" style="font-family: 'Playfair Display', serif;">Chitato</div>
         <div class="hearts-row">💗 💛 💗</div>
         <div class="tagline">I Love u in every universe</div>
