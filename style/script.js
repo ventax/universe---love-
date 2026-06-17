@@ -24,7 +24,10 @@ for (let i = 1; i <= 58; i++) {
 let scene = new THREE.Scene();
 scene.background = new THREE.Color('#120010');
 let camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 1000);
-camera.position.set(0, 3, isMobile ? 40 : 30);
+const NORMAL_CAMERA_Z = isMobile ? 40 : 30;
+let cameraTargetZ = isMobile ? 100 : 120; // start far away for fly-in effect
+let flyInComplete = false;               // stops lerp once fly-in is done
+camera.position.set(0, 3, cameraTargetZ);
 
 let renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -500,15 +503,12 @@ function startSakura() {
 // ─── Intro Screen & Audio ───
 const hideLoading = () => {
     if (loadingEl.style.display === 'none') return;
-    loadingEl.style.opacity = '0';
-    setTimeout(() => {
-        loadingEl.style.display = 'none';
-        const audio = new Audio('style/nhac.mp3');
-        audio.loop = true;
-        audio.volume = 0.6;
-        audio.play().catch(e => console.log("Audio play failed:", e));
-        startSakura();
-    }, 1200);
+    loadingEl.style.display = 'none';
+    const audio = new Audio('style/nhac.mp3');
+    audio.loop = true;
+    audio.volume = 0.6;
+    audio.play().catch(e => console.log("Audio play failed:", e));
+    startSakura();
 };
 
 // After scene is ready, show personal intro for Chitato
@@ -522,7 +522,7 @@ setTimeout(() => {
     intro.id = 'intro-screen';
     intro.innerHTML = `
         <div class="to-label">From Ken,</div>
-        <div class="to-label">For.</div>
+        <div class="to-label">For</div>
         <div class="name" style="font-family: 'Playfair Display', serif;">Chitato</div>
         <div class="hearts-row">💗 💛 💗</div>
         <div class="tagline">I Love u in every universe</div>
@@ -530,7 +530,26 @@ setTimeout(() => {
     `;
     loadingEl.appendChild(intro);
 
-    document.getElementById('enter-btn').addEventListener('click', hideLoading, { once: true });
+    document.getElementById('enter-btn').addEventListener('click', () => {
+        // Step 1: gently fade out intro text
+        const introEl = document.getElementById('intro-screen');
+        if (introEl) {
+            introEl.style.transition = 'opacity 0.5s ease';
+            introEl.style.opacity = '0';
+        }
+
+        // Step 2: start Three.js camera fly-in toward the galaxy
+        cameraTargetZ = NORMAL_CAMERA_Z;
+
+        // Step 3: fade overlay to transparent after brief delay
+        setTimeout(() => {
+            loadingEl.style.transition = 'opacity 1.6s ease-in-out';
+            loadingEl.style.opacity = '0';
+
+            // Step 4: after fade, hide overlay + play music
+            setTimeout(hideLoading, 1600);
+        }, 400);
+    }, { once: true });
 }, 800);
 
 
@@ -560,10 +579,104 @@ renderer.setAnimationLoop(() => {
             mat.needsUpdate = true;
         }
     }
+    // Smooth camera fly-in — stops as soon as it arrives so OrbitControls can zoom freely
+    if (!flyInComplete) {
+        camera.position.z += (cameraTargetZ - camera.position.z) * 0.025;
+        // Mark complete when close enough to target (< 0.3 units)
+        if (cameraTargetZ === NORMAL_CAMERA_Z && Math.abs(camera.position.z - NORMAL_CAMERA_Z) < 0.3) {
+            camera.position.z = NORMAL_CAMERA_Z;
+            flyInComplete = true;
+        }
+    }
+
     autoRotationAngle += delta * 0.1;
     points.rotation.y = autoRotationAngle;
     points.rotation.z = 0.2;
     points.rotation.x = 0.0;
 
     renderer.render(scene, camera);
+});
+
+// ─── Photo Click Lightbox ───
+const raycaster    = new THREE.Raycaster();
+raycaster.params.Points.threshold = 1.8; // click detection radius (world units)
+const mouse        = new THREE.Vector2();
+const modalEl      = document.getElementById('photo-modal');
+const modalImg     = document.getElementById('modal-img');
+const modalClose   = document.getElementById('modal-close');
+const modalBackdrop = document.getElementById('modal-backdrop');
+
+function openPhoto(src) {
+    modalImg.src = src;
+    modalEl.classList.add('open');
+}
+function closePhoto() {
+    modalEl.classList.remove('open');
+    setTimeout(() => { if (!modalEl.classList.contains('open')) modalImg.src = ''; }, 380);
+}
+
+modalClose.addEventListener('click', closePhoto);
+modalBackdrop.addEventListener('click', closePhoto);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closePhoto(); });
+
+// Drag detection: don't open modal if user is rotating/dragging the scene
+let mouseStartX = 0, mouseStartY = 0, isDragging = false;
+renderer.domElement.addEventListener('mousedown', e => {
+    mouseStartX = e.clientX; mouseStartY = e.clientY;
+    isDragging = false;
+});
+renderer.domElement.addEventListener('mousemove', e => {
+    const dx = e.clientX - mouseStartX, dy = e.clientY - mouseStartY;
+    if (dx * dx + dy * dy > 36) isDragging = true; // > 6px = drag
+});
+
+// Click: open photo modal if a photo particle is hit
+renderer.domElement.addEventListener('click', e => {
+    if (isDragging || !flyInComplete) return;
+
+    const rect = renderer.domElement.getBoundingClientRect();
+    mouse.x =  ((e.clientX - rect.left) / rect.width)  * 2 - 1;
+    mouse.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
+
+    raycaster.setFromCamera(mouse, camera);
+    const hits = raycaster.intersectObject(points);
+
+    for (const hit of hits) {
+        const idx = hit.index;
+        const texIdx = Math.floor(textureIndices[idx]);
+        if (
+            randomVals[idx] < 0.02 &&
+            isCenter[idx]  < 0.5  &&
+            isStar[idx]    < 0.5  &&
+            texIdx < imagePaths.length
+        ) {
+            openPhoto(imagePaths[texIdx]);
+            break;
+        }
+    }
+});
+
+// Hover: change cursor to pointer when over a photo particle (throttled)
+let lastHoverMs = 0;
+renderer.domElement.addEventListener('mousemove', e => {
+    const now = Date.now();
+    if (now - lastHoverMs < 80 || !flyInComplete) return;
+    lastHoverMs = now;
+
+    const rect = renderer.domElement.getBoundingClientRect();
+    mouse.x =  ((e.clientX - rect.left) / rect.width)  * 2 - 1;
+    mouse.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
+    raycaster.setFromCamera(mouse, camera);
+    const hits = raycaster.intersectObject(points);
+
+    let onPhoto = false;
+    for (const hit of hits) {
+        const idx = hit.index;
+        const texIdx = Math.floor(textureIndices[idx]);
+        if (randomVals[idx] < 0.02 && isCenter[idx] < 0.5 && isStar[idx] < 0.5 && texIdx < imagePaths.length) {
+            onPhoto = true;
+            break;
+        }
+    }
+    renderer.domElement.style.cursor = onPhoto ? 'pointer' : 'default';
 });

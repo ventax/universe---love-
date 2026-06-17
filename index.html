@@ -15,7 +15,7 @@
         href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&family=Playfair+Display:wght@400;700&display=swap"
         rel="stylesheet">
 
-    <link rel="stylesheet" href="style/style.css">
+    <link rel="stylesheet" href="style/style.css?v=10">
 </head>
 
 <body>
@@ -27,10 +27,16 @@
     <!-- Sakura petals container -->
     <div class="sakura-container" id="sakura"></div>
 
+    <!-- Photo lightbox modal -->
+    <div id="photo-modal" class="photo-modal">
+        <div class="modal-backdrop" id="modal-backdrop"></div>
+        <div class="modal-card">
+            <img id="modal-img" src="" alt="Memory">
+            <button class="modal-close" id="modal-close" title="Tutup">✕</button>
+        </div>
+    </div>
 
-
-
-    <script type="module" src="style/script.js"></script>
+    <script type="module" src="style/script.js?v=10"></script>
 </body>
 
 </html>
