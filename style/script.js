@@ -597,13 +597,10 @@ renderer.setAnimationLoop(() => {
     renderer.render(scene, camera);
 });
 
-// ─── Photo Click Lightbox ───
-const raycaster    = new THREE.Raycaster();
-raycaster.params.Points.threshold = 1.8; // click detection radius (world units)
-const mouse        = new THREE.Vector2();
-const modalEl      = document.getElementById('photo-modal');
-const modalImg     = document.getElementById('modal-img');
-const modalClose   = document.getElementById('modal-close');
+// ─── Photo Click Lightbox (Screen-Space Picking) ───
+const modalEl       = document.getElementById('photo-modal');
+const modalImg      = document.getElementById('modal-img');
+const modalClose    = document.getElementById('modal-close');
 const modalBackdrop = document.getElementById('modal-backdrop');
 
 function openPhoto(src) {
@@ -619,7 +616,40 @@ modalClose.addEventListener('click', closePhoto);
 modalBackdrop.addEventListener('click', closePhoto);
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closePhoto(); });
 
-// Drag detection: don't open modal if user is rotating/dragging the scene
+// Screen-space picking: project all photo particles to 2D and find closest to cursor
+const _pickVec = new THREE.Vector3();
+const positions = geo.attributes.position.array;
+
+function findPhotoAtScreen(screenX, screenY, rect, thresholdPx) {
+    let bestDist = thresholdPx * thresholdPx;
+    let bestIdx  = -1;
+
+    for (const idx of imageParticleIndices) {
+        const texIdx = Math.floor(textureIndices[idx]);
+        if (texIdx >= imagePaths.length) continue; // skip icon slots
+
+        // Get particle world position (accounting for galaxy rotation)
+        _pickVec.set(positions[idx * 3], positions[idx * 3 + 1], positions[idx * 3 + 2]);
+        _pickVec.applyMatrix4(points.matrixWorld);
+
+        // Project to NDC
+        _pickVec.project(camera);
+
+        // Skip if behind camera
+        if (_pickVec.z > 1) continue;
+
+        // Convert NDC → screen pixels
+        const sx = (_pickVec.x  + 1) / 2 * rect.width;
+        const sy = (1 - (_pickVec.y + 1) / 2) * rect.height;
+
+        const dx = screenX - sx, dy = screenY - sy;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < bestDist) { bestDist = d2; bestIdx = idx; }
+    }
+    return bestIdx;
+}
+
+// Drag detection: don't open modal if user is rotating the scene
 let mouseStartX = 0, mouseStartY = 0, isDragging = false;
 renderer.domElement.addEventListener('mousedown', e => {
     mouseStartX = e.clientX; mouseStartY = e.clientY;
@@ -627,56 +657,24 @@ renderer.domElement.addEventListener('mousedown', e => {
 });
 renderer.domElement.addEventListener('mousemove', e => {
     const dx = e.clientX - mouseStartX, dy = e.clientY - mouseStartY;
-    if (dx * dx + dy * dy > 36) isDragging = true; // > 6px = drag
+    if (dx * dx + dy * dy > 36) isDragging = true;
 });
 
-// Click: open photo modal if a photo particle is hit
+// Click → find photo at cursor and open modal
 renderer.domElement.addEventListener('click', e => {
     if (isDragging || !flyInComplete) return;
-
     const rect = renderer.domElement.getBoundingClientRect();
-    mouse.x =  ((e.clientX - rect.left) / rect.width)  * 2 - 1;
-    mouse.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
-
-    raycaster.setFromCamera(mouse, camera);
-    const hits = raycaster.intersectObject(points);
-
-    for (const hit of hits) {
-        const idx = hit.index;
-        const texIdx = Math.floor(textureIndices[idx]);
-        if (
-            randomVals[idx] < 0.02 &&
-            isCenter[idx]  < 0.5  &&
-            isStar[idx]    < 0.5  &&
-            texIdx < imagePaths.length
-        ) {
-            openPhoto(imagePaths[texIdx]);
-            break;
-        }
-    }
+    const idx  = findPhotoAtScreen(e.clientX - rect.left, e.clientY - rect.top, rect, 38);
+    if (idx !== -1) openPhoto(imagePaths[Math.floor(textureIndices[idx])]);
 });
 
-// Hover: change cursor to pointer when over a photo particle (throttled)
+// Hover → cursor pointer hint (throttled to 80ms)
 let lastHoverMs = 0;
 renderer.domElement.addEventListener('mousemove', e => {
     const now = Date.now();
     if (now - lastHoverMs < 80 || !flyInComplete) return;
     lastHoverMs = now;
-
-    const rect = renderer.domElement.getBoundingClientRect();
-    mouse.x =  ((e.clientX - rect.left) / rect.width)  * 2 - 1;
-    mouse.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
-    raycaster.setFromCamera(mouse, camera);
-    const hits = raycaster.intersectObject(points);
-
-    let onPhoto = false;
-    for (const hit of hits) {
-        const idx = hit.index;
-        const texIdx = Math.floor(textureIndices[idx]);
-        if (randomVals[idx] < 0.02 && isCenter[idx] < 0.5 && isStar[idx] < 0.5 && texIdx < imagePaths.length) {
-            onPhoto = true;
-            break;
-        }
-    }
+    const rect   = renderer.domElement.getBoundingClientRect();
+    const onPhoto = findPhotoAtScreen(e.clientX - rect.left, e.clientY - rect.top, rect, 35) !== -1;
     renderer.domElement.style.cursor = onPhoto ? 'pointer' : 'default';
 });
